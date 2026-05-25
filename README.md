@@ -1,268 +1,178 @@
-#	OCR Server 2.0 - (c) Agencia Nacional de Telecomunicacoees
+# OCR Server 2.1.1 — © Agência Nacional de Telecomunicações (Anatel)
 
-This script monitors a set of input directories for PDF files once a new file is detected, it is processes through tesseract OCR in order to generate a new file with a hidden searchable text layer
+Servidor de OCR automático para arquivos PDF. Monitora diretórios de entrada e aplica reconhecimento óptico de caracteres via [Tesseract](https://github.com/tesseract-ocr/tesseract), produzindo um novo PDF/A com camada de texto pesquisável oculta — sem alterar a aparência visual do documento original.
 
-It may be distributed under the conditions of the LGPL v2.1 license.
+Distribuído sob os termos da licença [LGPL v2.1](lgpl-2.1.txt).
 
-Author: Guilherme Chehab 
+**Autor:** Guilherme Chehab
 
-##	Version History:
- - 0.1
- 	- Initial single server version
- - 0.2
- 	- Check if page already has the html hidden layer, if so, ignore it
- - 0.3
- 	- Solved issues about various image enconding types
- - 0.4
- 	- Added a postnormalization step to ensure all output pdf pages have the same size and orientations as the original files
- - 0.5
- 	- Used input file renaming as a way to sync multiple parallel instances, that way, it is minimized the risk of same file being OCRed multiple times.
- - 0.6
- 	- Added a default handler for unknown image encoding using jpeg encoding
- - 0.7
- 	- Solved an issue with files with more than 1000 pages
- - 1.0
- 	- First release version
- 	- 1.0.1   Solving error when file has no images
- 	- 1.0.2   Fix bug when counting cores for AMD processors
- 	- 1.0.3   Added better image type detection
- 	- 1.0.4   Fix: added ubuntu init script
- 	- 1.0.4b  Add Centos 6.9 install instructions
- - 2.0
- 	- PDF/A output, and better compression with ghostscript
-	- Rewritten image extration, processing and transformations process
-	- Check if input file is signed, in this case, does not change the file contents
-	- Added '-oem 0' option to tesseract (force legacy mode on tesseract 4)
-	- Use operating system packges by default
-	- Changed paths from external programs, instead of using full paths, uses first match from $PATH
-	- Check existence of external programs on path before running
-	- Add support for stencil type and image encoding scans, changed default extraction method for unknown types/encodings
-	- Fix: create subpaths on error folder
-	- Fix: trying to reduce overhead on temporary folder
-- 2.1/2.1.1
-	- Filter pipelines: disabled by default
-	- Color reduction: disabled by default
-	- Stock Ubuntu 20.x docker
-	 
-##	TODO:
- - Changes get_imgs and OCR processing to enable pages with more than one image -- it would not work on previous versions that assumed #pages = #imgs. Version 1.0.1 counts them diferently but does not treat it adequately -- shall require better pdf´s internal structure handling
- - Review poppler and cpdf install instructions
- - Add better handling of vectorized and non scanned pdf files
- - Add option to generate multi-page tiff files to reduce overhead (one for each CPU core) -- harder with current scalling, cropping and rotation handlers
- - Check mean saturation for additional colored images detection and automatically convert to B&W if possible -- added function to analyse image color histogram -> just need to add option to convert it to B&W.
- - Move all parameters to config file
- - Add some job control web interface
- - Add end user interface to submit files through web
- - Add check external programs version requirements before running
-  
-##	BUGS:
- - When image is of type stencil or encoding image, cropping information is lost, and page is shown different than original, this is due to using pdftoppm instead of pdfimages
- 
-##	Requirements: 
- - Perl 5.10.1, com seguintes módulos:
-	- File::Find::Rule
-	- File::Basename
-	- File::Copy
-	- File::Path
-	- File::Touch
-	- Sys::Syslog
-	- Sys::Hostname
-	- IPC::Open3
-	- IO::Select
-	- POSIX
- - Tesseract-ocr 3.05, com dicionários inglês e português
- - Pdftk 2.02
- - Poppler-utils 0.42.0
- - Cpdf 2.1
- - ImageMagick 6.7.2-7
- - Ghostcript 9.22
+---
 
-Na ausência deles na distribuição do sistema operacional, o uso de versões antigas desses componentes podem comprometer o correto funcionamento do sistema
+## Documentação adicional
 
-Dessa forma, pode ser necessário compilar os componentes faltantes, assim como as bibliotecas necessárias para o seu correto funcionamento.
+- [Diagrama de fluxo (PDF)](workflow.pdf) — fluxo completo de processamento do servidor
+- [Diagrama de fluxo (Visio)](workflow.vsd) — arquivo-fonte do diagrama
 
-Esse arquivo contem informações quanto aos procedimentos para instalar e configurar o sistema pressupondo o pior caso, qual seja, a necessidade de compilação dos componentes.
+---
 
-ATENÇÃO: se algum componente abaixo não estiver disponível no repositório padrão para o Linux utilizado, deve-se proceder com a compilação da versão mais recente do componente disponibilizado em outros repositórios para que seja instalado no Linux a ser utilizado.
+## Como funciona
 
-### Configure o script, alterando as variáveis no arquivo '/usr/local/bin/ocr':
+O servidor opera como daemon Unix e monitora continuamente os diretórios configurados. A cada ciclo:
 
-- @BASE_DIRS:	Lista de diretórios base para a busca de arquivos --> cada diretório base irá ter sua própria instância do script 
-- @SUB_DIRS:		Subdiretórios de entrada, saída, backup do arquivos originais, temporário e de arquivos com erro
-- $MAX_FILES:	Número máximo de arquivos a serem processados simultaneamente por diretório de entrada (default: 2)
-- $MAX_PGS:		Número máximo de páginas que podem ser processadas simultanemante por arquivo de entrada (default: no. de CPUs)
+1. Detecta novos arquivos PDF no diretório `Entrada/`
+2. Verifica se o arquivo já possui texto extraível — se sim, ignora
+3. Processa cada página em paralelo via Tesseract (um processo por página)
+4. Gera um novo PDF/A com camada de texto pesquisável oculta
+5. Move o resultado para `Saida/` e o original para `Originais_Processados/`
+6. Em caso de falha, move o arquivo para `Erro/`
 
-Essas variáveis controlam o número máximo de instâncias de processos simultâneas = Num. de diretorios X MAX_FILES X MAX_PGS.
+A sincronização entre instâncias paralelas é feita por renomeação de arquivo e `flock`, permitindo que múltiplos servidores monitorem o mesmo diretório simultaneamente (útil em ambientes com NFS/SAMBA).
 
-Recomenda-se que o equipamento tenha em torno de 1,5 GB de RAM para cada core de CPU de forma a evitar swap. Se isso não for possível, pode ser reduzido o número de processos ou arquivos simultâneos.
+---
 
-A configuração do servidor pode ser dimensionada com base no tempo desejado para processamento de grandes arquivos (> 100 páginas). Cada página tem sua própria thread de processamento, até o limite de $MAX_PGS, cujo default é o no. de cores de CPU. Em média cada página demora em torno de 18 segundos em uma CPU Xeon E5 4670@2.6GHz. Assim, com 16 CPUs, o desempenho agregado é em torno de 1,2 segundos por página.
+## Execução via Docker (recomendado)
 
-Para operação multi instância, basta instalar quantos servidores forem necessários e eles podem ter acesso aos mesmos diretórios de entrada que podem ser compartilhamentos SAMBA/CIFS/Windows ou NFS.
+A forma recomendada de implantação é via container Docker, que inclui todas as dependências (Tesseract, Ghostscript, ImageMagick, cpdf, pdftk, poppler-utils) sem necessidade de instalação manual.
 
-# Container Docker
+### Pré-requisito
 
-O OCR-Server também está disponível como um container Docker, permitindo o rápido provisionamento da solução em ambiente de produção. Todos os procedimento para construção da imagem do container podem ser encontrados no arquivo Dockerfile.
+Docker instalado no host.
 
-Para execução do serviço, basta que o docker instalado no servidor e executar o seguinte comando:
+### Build da imagem
 
-    docker run --name <NOME_CONTAINER> -d -v <DIRETORIO_BASE>:/var/ocr-server gchehab/ocr-server
+```sh
+docker build -t ocr-server .
+```
 
-    Onde:
-    --name : Nome atribuído à instância do container. Ex: ocr-server
-    -d : Indicação executar o container em background 
-    -v : Diretório de compartilhamento entre o servidor host e o container.
-         O parâmetro <DIRETORIO_BASE> deve ser substituído pelo diretório base para busca de arquivos.
+### Iniciando o serviço
 
-Para visualizar os logs de processamento do serviço, basta executar o seguinte comando:
+```sh
+docker run --name <NOME_CONTAINER> -d -v <DIRETORIO_BASE>:/var/ocr-server ocr-server
+```
 
-    docker logs <NOME_CONTAINER>
+| Parâmetro | Descrição |
+|-----------|-----------|
+| `--name` | Nome da instância do container (ex: `ocr-server`) |
+| `-d` | Executa em segundo plano |
+| `-v <DIRETORIO_BASE>:/var/ocr-server` | Mapeia o diretório do host onde os PDFs serão monitorados |
 
-# COMPILAÇÃO dos pré requisitos (obs.: os comandos devem ser executados como root)
+O container criará automaticamente a seguinte estrutura de subdiretórios em `<DIRETORIO_BASE>`:
 
-Em servidor Ubuntu 16.04, os pacotes padrão (com exceção do CPDF, que não tem no repositório oficial) 
-são suficientes para executar o aplicativo, não havendo necessidade de compilar todos, assim é a arquitetura recomendada
+```
+<DIRETORIO_BASE>/
+├── Entrada/                # Coloque aqui os PDFs para processar
+├── Saida/                  # PDFs com OCR aplicado
+├── Originais_Processados/  # Cópias dos arquivos originais
+└── Erro/                   # Arquivos que não puderam ser processados
+```
 
-Quanto ao CPDF, é possível baixar a versão binária em: https://github.com/coherentgraphics/cpdf-binaries
+### Visualizando os logs
 
-## Compilando os pré-requisitos: máquina de COMPILAÇÃO APENAS 
+```sh
+# Últimas entradas de log
+docker logs <NOME_CONTAINER>
 
-    # RedHat 6.7 e Centos 6.9:
-	yum -y install autoconf make gcc-java gcc gcc-c++ subversion pkg-config automake libtool yasm cmake git libgcj unzip
-	yum -y install libtiff-devel libpng-devel openjpeg-devel libjpeg-turbo-devel giflib-devel libwebp-devel zlib-devel libicu-devel pango-devel cairo-devel fontconfig-devel gettext-devel libcurl-devel nss-devel
-	cd /tmp
-	wget http://www.itzgeek.com/msttcore-fonts-2.0-3.noarch.rpm
-	rpm -Uvh msttcore-fonts-2.0-3.noarch.rpm
-	rm -f msttcore-fonts-2.0-3.noarch.rpm
+# Acompanhamento em tempo real
+docker logs -f <NOME_CONTAINER>
+```
 
-    # Centos 6.9
-    #   \_ autoconf-archive
-	wget ftp://ftp.pbone.net/mirror/ftp5.gwdg.de/pub/opensuse/repositories/home:/pelliott11:/autoconf-archive/CentOS_CentOS-6/noarch/autoconf-archive-2012.04.07-7.3.noarch.rpm
-	rpm -i autoconf-archive-2012.04.07-7.3.noarch.rpm
-	rm autoconf-archive-2012.04.07-7.3.noarch.rpm
-    #   \_ GCC 4.8
-	wget http://people.centos.org/tru/devtools-2/devtools-2.repo -O /etc/yum.repos.d/devtools-2.repo
-	yum install devtoolset-2-gcc devtoolset-2-binutils devtoolset-2-gcc-c++ devtoolset-2-gcj
+---
 
-    # Ubuntu 14.04 Server:
-	apt-get install build-essential cmake libtool yasm pkg-config subversion git libgcj14 
-	apt-get install libtiff-dev libpng-dev libopenjpeg-dev libjpeg8-dev libjpeg-turbo8-dev libjpeg-dev libgif-dev zlib1g-dev libicu-dev libpango1.0-dev libcairo2-dev libfontconfig1-dev libgettextpo-dev libcurl-dev  libnss3-dev
-	apt-get install ttf-mscorefonts-installer
+## Configuração
 
-    # Ambas plataformas:
-	cd /usr/local/src
+As variáveis de configuração estão no arquivo `/usr/local/bin/ocr`:
 
-	for i in \
-		https://github.com/tesseract-ocr/langdata.git \
-		https://github.com/DanBloomberg/leptonica.git \
-		https://github.com/libav/libav.git  \
-		https://github.com/tesseract-ocr/tessdata.git \
-		https://github.com/tesseract-ocr/tesseract.git \
-		git://git.freedesktop.org/git/poppler/poppler.git \
-		git://git.freedesktop.org/git/poppler/test.git \
-		https://github.com/Flameeyes/unpaper.git \
-		https://github.com/ocaml/ocaml.git \
-		https://gitlab.camlcity.org/gerd/lib-findlib.git \
-		https://github.com/johnwhitington/camlpdf.git \
-		https://github.com/johnwhitington/cpdf-source.git \
-		http://git.ghostscript.com/ghostpdl.git \
-	; do git clone $i; done
+| Variável | Descrição | Padrão |
+|----------|-----------|--------|
+| `@BASE_DIRS` | Lista de diretórios base monitorados — cada diretório gera sua própria instância | — |
+| `@SUB_DIRS` | Subdiretórios de entrada, saída, backup de originais, temporário e de erros | — |
+| `$MAX_FILES` | Número máximo de arquivos processados simultaneamente por diretório | `2` |
+| `$MAX_PGS` | Número máximo de páginas processadas simultaneamente por arquivo | nº de CPUs |
 
-	wget https://www.pdflabs.com/tools/pdftk-the-pdf-toolkit/pdftk-2.02-src.zip
-	unzip pdftk-2.02-src.zip
-	rm -f pdftk-2.02-src.zip
+O número máximo de processos simultâneos resulta de: **Nº de diretórios × MAX\_FILES × MAX\_PGS**.
 
-    # pdftk, versão 2.02 ou superior
-    cd pdftk-2.02-dist/pdftk && make -f Makefile.Redhat all install && cd ../..
+### Dimensionamento de recursos
 
-    # Ghostscript 9.18 ou superior
-    #wget http://downloads.ghostscript.com/public/old-gs-releases/ghostscript-9.21.tar.gz
-    #tar xvozf ghostscript-9.21.tar.gz
-    #rm -f ghostscript-9.21.tar.gz
-    #cd ghostscript-9.21
-    cd ghostpdl
-    ./autogen.sh; ./configure
-    make all install
-    cd ..
+Recomenda-se aproximadamente **1,5 GB de RAM por core** para evitar uso de swap. Caso não seja possível, reduza `$MAX_FILES` ou `$MAX_PGS`.
 
-    # Centos 6.9
-    #   \_ Cria um novo shell usando o GCC 4.8 por default
-    scl enable devtoolset-2 bash  
+Como referência de desempenho: em uma CPU Xeon E5 4670 @ 2,6 GHz, cada página leva ~18 segundos. Com 16 cores, o desempenho agregado é de ~1,2 segundos por página.
 
-    # Tesseract, versão 3.05-dev ou superior
-    # Bibliotecas para o Tesseract: Leptonica e Libav
-    cd leptonica && ./autobuild && ./configure && make all install && cd ..
+### Operação multi-instância
 
-    # Para compilação do Tesseract após a compilação do leptonica
-    export PKG_CONFIG_PATH=/usr/lib:/usr/local/lib:/usr/local/src/leptonica/
+Para escalar horizontalmente, instale múltiplos servidores apontando para o mesmo diretório de entrada via compartilhamento SAMBA/CIFS ou NFS. O mecanismo de sincronização garante que cada PDF seja processado por apenas uma instância.
 
-    cd libav && ./configure --enable-sram && make all install && cd ..
+---
 
-    # Tesseract
-    cd tesseract && ./autogen.sh && ./configure && make all install && cd ..
-    cp -avR tessdata/* /usr/local/share/tessdata/
+## Instalação manual (sem Docker)
 
-    # cpdf, versão 2.1 ou superior
-    cd ocaml && ./configure && make world.opt && make install && cd ..
-    mkdir -p /usr/local/man/man5
-    # lib-findlib -- pode dar erro na instalação de páginas de man... é seguro ignorar, ou basta criar os diretórios faltantes e tentar novamente 
-    cd lib-findlib  && ./configure && make all && make install && cd ..
-    cd camlpdf && sed -i.bak s/\(uint32\)/\(uint32_t\)/g flatestubs.c && make && make install && cd ..
-    cd cpdf-source && make all && make install && cp cpdf /usr/local/bin && cd ..
+> A instalação manual é destinada a ambientes sem suporte a containers. O uso do Docker (seção acima) é fortemente recomendado.
 
-    # poppler-utils, versão 0.42.0 ou superior
-    cd poppler && ./autogen.sh && ./configure --enable-cmyk --enable-libcurl && make  all install && cd ..
+### Pré-requisitos — Ubuntu 22.04 / 24.04
 
-    # Centos 6.9
-    #   \_ Termina o shell usando o GCC 4.8 por default
-    exit
+```sh
+# Habilitar repositório universe (necessário no Ubuntu 24.04)
+add-apt-repository universe
 
+apt-get update && apt-get upgrade && apt-get install -y \
+    tesseract-ocr tesseract-ocr-por tesseract-ocr-eng tesseract-ocr-spa \
+    leptonica-progs poppler-utils pdftk-java unpaper ghostscript imagemagick \
+    rsyslog perl libfile-find-rule-perl libfile-touch-perl libunix-syslog-perl
 
-## Comandos adicionais para configuração do módulo:
-	
-    # Criação do usuário
-    adduser ocr
+# cpdf — binário pré-compilado (não disponível nos repositórios oficiais)
+wget https://github.com/coherentgraphics/cpdf-binaries/raw/v2.9/Linux-Intel-64bit/cpdf \
+     -O /usr/local/bin/cpdf
+chmod 755 /usr/local/bin/cpdf
 
-    # Copie os arquivos ocr ocr-* para os diretórios corretos, conforme o sistema operacional
-    cp ./usr/local/bin/ocr /usr/local/bin
+# Habilitar leitura/escrita de PDFs no ImageMagick
+sed -i 's/rights="none" pattern="PDF"/rights="read|write" pattern="PDF"/' \
+    /etc/ImageMagick-6/policy.xml
+```
 
-    # Auto start (RedHat 6.7 e CentOs 6.9)
-    cp ./usr/local/etc/init.d/ocr-redhat /etc/init.d/ocr 
-    mv /etc
-    chkconfig --add ocr
-    chkconfig --level 2345 ocr on
-    
-    # Auto start (Ubuntu 14.04)
-    cp ./usr/local/etc/init.d/ocr-ubuntu /etc/init.d/ocr
-    update-rd.d ocr defaults
-    
-    # Create pkg -- para instalação em outras máquinas sem a necessidade de novas compilações
-    cd /home/ocr
-    tar cvozf pkg-ocr.tgz /usr/local/bin /usr/local/lib* /usr/local/man/ /usr/local/sbin/ /usr/local/share/ /usr/local/etc /usr/local/include/ /home/ocr/ocr* /etc/init.d/ocr /etc/rc*.d/*ocr
-    su
+### Instalação do serviço
 
-# INSTALAÇÃO (obs.: os comandos devem ser executados como root)
-    # Criação do usuário
-    adduser ocr
+```sh
+# Script principal
+cp usr/local/bin/ocr /usr/local/bin/
+chmod 755 /usr/local/bin/ocr
 
-    # Copie o pacote para os outros servidores e extraia com:
-    cd /
-    tar xovzf pkg-ocr.tgz
+# Script de inicialização
+cp etc/init.d/ocr /etc/init.d/
+chmod 755 /etc/init.d/ocr
+update-rc.d ocr defaults
 
-    # Instalando pré-requisitos RUNTIME em servidores adicionais
+# Criar diretórios de trabalho
+mkdir -p /var/ocr-server/{Entrada,Saida,Originais_Processados,Erro}
+chmod -R 777 /var/ocr-server
 
-    # Redhat 6.7 e CentOS 6.9
-    yum -y install perl-File-Find-Rule-Perl perl-File-Touch libtiff libpng openjpeg-libs libjpeg-turbo giflib zlib libicu pango cairo fontconfig ImageMagick gettext libwebp ghostscript
-    yum -y install libtiff libpng openjpeg libjpeg-turbo giflib libwebp zlib libicu pango cairo fontconfig gettext 
+# Iniciar o serviço
+service ocr start
+```
 
-    # Ubuntu 14.04
-    apt-get install  libfile-find-rule-perl libfile-find-rule-perl-perl libtiff5 libpng12-0 libopenjpeg2 libjpeg-turbo8 libgif4 zlib1g libicu52 libpango1.0-0 libcairo2 fontconfig imagemagick gettext libwebp5 # libgcj14 
-    apt-get install libtiff5 libpng12-0 libopenjpeg2 libjpeg8 libjpeg-turbo8 libjpeg8 zlib1g libpango1.0-0 libcairo2 libfontconfig1 libgettextpo0 ghostscript
+---
 
-# Inicie o serviço com
-    service ocr start
+## Histórico de versões
+
+- **1.0** — Primeira versão de produção. Suporte a múltiplos tipos de imagem; script init.d para Ubuntu e CentOS.
+- **2.0** — Saída em formato PDF/A com melhor compressão via Ghostscript. Reescrita do processo de extração e transformação de imagens. Verificação de assinatura digital (arquivos assinados não são modificados). Uso preferencial de pacotes do sistema operacional.
+- **2.1 / 2.1.1** — Filtros de processamento e redução de cor desabilitados por padrão. Container Docker baseado em Ubuntu.
+
+---
+
+## Limitações e pendências conhecidas
+
+### Pendências (TODO)
+
+- Suporte a páginas PDF com mais de uma imagem por página — a versão atual assume que o número de páginas é igual ao número de imagens
+- Mover todas as configurações para arquivo externo (`.conf`)
+- Interface web para controle de filas e submissão de arquivos pelo usuário final
+
+### Problemas conhecidos
+
+- Em PDFs com imagens do tipo *stencil* ou *encoding*, as informações de recorte são perdidas no processamento, fazendo com que a página gerada difira visualmente do original. Isso decorre de uma limitação do `pdftoppm` na extração dessas imagens.
+
+---
 
 ## Erros ou Sugestões
-1. [Abrir Issue](https://github.com/anatelgovbr/ocr-server/issues) no repositório do GitHub da solução se ocorrer erro na execução de sua instalação.
-2. [Abrir Issue](https://github.com/anatelgovbr/ocr-server/issues) no repositório do GitHub da solução se ocorrer erro na sua operação.
-3. Na abertura da Issue utilizar o modelo **"1 - Reportar Erro"**.
+
+1. [Abrir Issue](https://github.com/anatelgovbr/ocr-server/issues) no repositório do GitHub em caso de erro na instalação ou na operação do serviço.
+2. Ao abrir a Issue, utilize o modelo **"1 - Reportar Erro"**.
