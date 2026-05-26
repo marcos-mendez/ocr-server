@@ -108,6 +108,7 @@ my $PDFTK = 'pdftk';
 
 # Depends on poppler-utils 0.42.0 or higher
 my $PDFFONTS = 'pdffonts';
+my $PDFTOTEXT = 'pdftotext';
 my $PDFIMAGES = 'pdfimages';
 my $PDFTOPPM = 'pdftoppm';
 my $PDFUNITE = 'pdfunite';
@@ -178,7 +179,7 @@ if ($@) {
 chdir('/') or die "$0: cannot chdir '/': $!\n";
 open(STDIN, '/dev/null') or die "$0: cannot open '/dev/null': $!\n";
 
-foreach my $exec ( $TESSERACT, $PDFTK, $PDFFONTS, $PDFIMAGES, $PDFSIG, $CPDF, $GS, $CONVERT) {
+foreach my $exec ( $TESSERACT, $PDFTK, $PDFFONTS, $PDFTOTEXT, $PDFIMAGES, $PDFSIG, $CPDF, $GS, $CONVERT) {
 	die "Error: $exec not found on path: $ENV{PATH}, check dependencies\n" if ( `which $exec | wc -l ` == 0);
 }
 
@@ -669,9 +670,9 @@ sub ocr {
 
 sub is_ocred {
 	my ($in_file) = @_;
-	my @fonts = `${PDFFONTS} -l 10 \"${in_file}\" 2>/dev/null`;
-
-	return ( scalar @fonts > 2 ? 1 :0 );
+	my $text = `${PDFTOTEXT} -l 10 \"${in_file}\" - 2>/dev/null`;
+	$text =~ s/\s+//g;
+	return ( length($text) > 3 ? 1 : 0 );
 }	
 
 sub get_pages {

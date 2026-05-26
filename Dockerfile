@@ -1,23 +1,29 @@
 
-FROM ubuntu:21.04
+FROM ubuntu:24.04
 
 WORKDIR /tmp
 
 ENV TZ=Etc/UTC
 RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone
 
+RUN sed -i 's/^Components: main restricted$/Components: main restricted universe/' \
+    /etc/apt/sources.list.d/ubuntu.sources
+
 # Instalação dos pacotes pré-requisitos do ocr-server 2
 RUN apt-get -y update && \
-    apt-get install -y tesseract-ocr tesseract-ocr-por tesseract-ocr-eng tesseract-ocr-spa leptonica-progs \
-    poppler-utils pdftk unpaper ocaml ghostscript imagemagick libcamlpdf-ocaml rsyslog \
-    wget perl libfile-find-rule-perl libfile-touch-perl libunix-syslog-perl
+    apt-get -y upgrade && \
+    apt-get install -y --no-install-recommends \
+    tesseract-ocr tesseract-ocr-por tesseract-ocr-eng tesseract-ocr-spa leptonica-progs \
+    poppler-utils pdftk-java unpaper ghostscript imagemagick rsyslog \
+    wget perl libfile-find-rule-perl libfile-touch-perl libunix-syslog-perl && \
+    apt-get clean && rm -rf /var/lib/apt/lists/*
+
+RUN sed -i 's/rights="none" pattern="PDF"/rights="read|write" pattern="PDF"/' /etc/ImageMagick-6/policy.xml
 
 RUN wget \
-    https://raw.githubusercontent.com/coherentgraphics/cpdf-binaries/master/Linux-Intel-64bit/cpdf \
+    https://github.com/coherentgraphics/cpdf-binaries/raw/v2.9/Linux-Intel-64bit/cpdf \
     -O /usr/local/bin/cpdf && \
     chmod 755 /usr/local/bin/cpdf
-
-RUN update-rc.d rsyslog defaults
 
 RUN useradd -m ocr
 

@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 
 # Inicializa serviço de log
-service rsyslog start
+rsyslogd 2>/dev/null || true
+sleep 1
 
 # Cria estrutura de pastas para monitoramento de arquivos
 mkdir -p /var/ocr-server/
@@ -13,6 +14,9 @@ chmod -R 777 /var/ocr-server
 
 # Iniciar serviço do OCR-Server
 service ocr start
+
+# Aguarda criação do syslog e exibe logs
+while [ ! -f /var/log/syslog ]; do sleep 1; done
 
 while [ 1 ]; do
 	tail -f /var/log/syslog
